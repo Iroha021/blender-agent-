@@ -123,7 +123,7 @@ export function Viewport({ scene, blender, mcp, syncing, onSync }: ViewportProps
             {mcp !== "connected"
               ? "后端正在连接 blender-mcp server，请稍候…"
               : disconnected
-                ? "Blender 未连接。打开 Blender → 启用 blender-mcp-ultra 插件 → 点击 Connect，AI 的每一步操作都会同步到这里。"
+                ? "Blender 未连接。打开 Blender → 按 N 打开侧边栏 → MCP → Start MCP Server，AI 的每一步操作都会同步到这里。"
                 : "在右侧输入建模需求，AI 创建的场景会实时出现在这里。"}
           </p>
         </div>

@@ -3,10 +3,24 @@ import type { AgentHub } from "./events";
 import type { McpHost } from "./mcp";
 import { SYSTEM_PROMPT } from "./prompt";
 
-const MAX_STEPS = 40;
+const MAX_STEPS = 60;
 const MAX_HISTORY = 60;
 const MAX_TOOL_RESULT_FOR_MODEL = 6000;
 const MAX_TOOL_RESULT_FOR_UI = 4000;
+
+/** 修改了场景的工具（含 execute_python 擦屁股的情况）—— 触发强制渲染自检 */
+const MODELING_PATTERN =
+  /^(object_(create|modify|delete|duplicate)|mesh_|modifier_|constraint_|material_|node_|shader_node|geonodes_|procedural_mesh|execute_python|animation_|keyframe_|nla_|driver_)/;
+
+/** 渲染/截图类工具，出现任意一个即视为做过自检 */
+const RENDER_CHECK_PATTERN = /^(render_preview|render_region|viewport_screenshot|viewport_screenshot_angles)/;
+
+/** 关掉工具调用后，若"改了场景但没渲染检查"，注入这条系统质检指令再跑一轮 */
+const REVIEW_INSTRUCTION = `（系统质检指令，非用户发言）你刚才修改了场景，但还没有完成渲染自检。请立即：
+1) 调用 render_preview 或 viewport_screenshot 查看当前结果；
+2) 对照建模质量清单检查：真实比例、部件是否齐全（如台灯的底座/灯杆/灯罩/灯泡）、有无穿模悬空缺面、材质是否生效、相机取景与灯光层次；
+3) 发现任何问题立即修正（至少修正一轮），修正后再次渲染确认；
+4) 最后用中文简要总结部件、尺寸与检查结果。`;
 
 /** 「Blender MCP」插件不提供 readOnly 注解，这里按工具名前缀判断是否只读（不需要导出预览） */
 const READ_ONLY_PATTERN =
@@ -60,6 +74,11 @@ export class SimpleAgent {
   private abortController: AbortController | null = null;
   private deps: AgentDeps;
 
+  // 本次任务内的质检状态
+  private modelingTouched = false;
+  private renderChecked = false;
+  private reviewForced = false;
+
   constructor(deps: AgentDeps) {
     this.deps = deps;
   }
@@ -82,6 +101,9 @@ export class SimpleAgent {
 
     const { hub } = this.deps;
     this.abortController = new AbortController();
+    this.modelingTouched = false;
+    this.renderChecked = false;
+    this.reviewForced = false;
     hub.setStatus({ busy: true });
     hub.addEntry({ kind: "user", text: userText });
     this.history.push({ role: "user", content: userText });
@@ -92,7 +114,16 @@ export class SimpleAgent {
 
         const result = await this.callModel(this.abortController.signal);
         const calls = result.toolCalls;
-        if (calls.length === 0) break;
+        if (calls.length === 0) {
+          // 改过场景却没有渲染自检 → 强制加一轮质检，避免"做完就跑"的低完成度交付
+          if (this.modelingTouched && !this.renderChecked && !this.reviewForced) {
+            this.reviewForced = true;
+            hub.addEntry({ kind: "system", text: "质检：要求渲染检查并修正模型" });
+            this.history.push({ role: "user", content: REVIEW_INSTRUCTION });
+            continue;
+          }
+          break;
+        }
 
         for (let i = 0; i < calls.length; i++) {
           try {
@@ -259,6 +290,8 @@ export class SimpleAgent {
         durationMs,
       });
       hub.setStatus({ blender: "connected" });
+      if (MODELING_PATTERN.test(name)) this.modelingTouched = true;
+      if (RENDER_CHECK_PATTERN.test(name)) this.renderChecked = true;
       this.history.push({
         role: "tool",
         tool_call_id: call.id,
