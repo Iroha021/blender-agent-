@@ -1,6 +1,6 @@
 # Blender AI Agent
 
-用自然语言驱动 Blender 建模的 AI Agent。前端是 React + Three.js 的可视化工作台，后端是 MCP host + DeepSeek 推理循环，通过 [blender-mcp-ultra](https://github.com/carlosh7/blender-mcp) 直接操控 Blender。
+用自然语言驱动 Blender 建模的 AI Agent。前端是 React + Three.js 的可视化工作台，后端是 MCP host + DeepSeek 推理循环，通过 Blender 里的 **Blender MCP** 插件（HTTP MCP server，默认 `http://127.0.0.1:9876/mcp`）直接操控 Blender。
 
 - 三栏极简深色界面：左侧工程文件管理、中部 3D 实时预览、右侧 AI 工作流与对话
 - AI 每一步工具调用后自动从 Blender 导出 GLB，Three.js 预览实时刷新
@@ -16,19 +16,19 @@
 Express 后端（server/）
    ├─ AgentHub：时间线、状态、SSE 广播、待答问题
    ├─ SimpleAgent：DeepSeek 流式推理 + 工具调用循环（可替换）
-   └─ McpHost：按 config/mcp.json 启动 stdio MCP server
-   │   MCP (stdio)
+   └─ McpHost：按 config/mcp.json 连接 MCP server（url=Streamable HTTP / command=stdio）
+   │   MCP (Streamable HTTP POST /mcp)
    ▼
-blender-mcp-ultra（mcp_server.py --lite，26 个核心工具 + tools_search/tool_execute）
-   │   socket 127.0.0.1:9876
+Blender MCP 插件（Blender 内置 addon 的 HTTP 服务，127.0.0.1:9876）
+   │   bpy.app.timers 主线程执行
    ▼
-Blender 插件（Add-on：BlenderMCP Ultra）
+Blender 场景
 ```
 
 ## 目录结构
 
 ```
-config/mcp.json      MCP server 配置（Claude 风格的 mcpServers）
+config/mcp.json      MCP server 配置（Claude 风格的 mcpServers，支持 url 或 command）
 server/              后端：Express + MCP host + DeepSeek 循环
 shared/types.ts      前后端共享类型
 src/                 前端 React 应用
@@ -42,26 +42,23 @@ dist/index.html      npm run build 产出的单文件前端
 ## 前置条件
 
 - Node.js ≥ 18、npm
-- Python ≥ 3.10，且已安装 blender-mcp-ultra：
-  ```bash
-  git clone https://github.com/carlosh7/blender-mcp.git
-  cd blender-mcp && pip install -e .
-  ```
-- Blender（4.x / 5.x）中安装并启用插件：
-  1. Blender → Edit → Preferences → Add-ons → Install…，选择 `blender-mcp/addon.py`
-  2. 勾选 **BlenderMCP Ultra**
-  3. 3D 视图按 `N` → **BlenderMCP** 面板 → 点击 **Connect**（监听 127.0.0.1:9876）
+- Blender 4.x / 5.x，并启用插件 **Blender MCP**（本机已安装在
+  `%APPDATA%\Blender Foundation\Blender\<版本>\scripts\addons\blender_mcp`）
+  1. Blender 3D 视图按 `N` → 侧边栏 **MCP** 标签页 → 点击 **Start MCP Server**
+  2. 面板显示 Running / Port 9876 即可；端口被占用时在面板里停掉再启动
 - 一个 DeepSeek API Key（https://platform.deepseek.com）
+
+> 不再需要 blender-mcp-ultra 的 Python 网关：插件的 80 多个工具由后端直接经 HTTP MCP 调用。
 
 ## 快速开始
 
 ```bash
 npm install
 cp .env.example .env
-# 编辑 .env：填入 DEEPSEEK_API_KEY，并确认 BLENDER_MCP_DIR 指向 blender-mcp 仓库
+# 编辑 .env：填入 DEEPSEEK_API_KEY（BLENDER_MCP_URL 默认指向 127.0.0.1:9876/mcp）
 ```
 
-先打开 Blender 并 Connect，然后：
+先打开 Blender 并在 MCP 面板点击 Start MCP Server，然后：
 
 ```bash
 npm run dev      # 开发：Vite :5173 + 后端 :8787（自动代理 /api）
@@ -96,26 +93,25 @@ npm start        # 后端 :8787，同时托管 dist/index.html
 | `DEEPSEEK_API_KEY` | 必填；缺失时后端拒绝对话并提示 |
 | `DEEPSEEK_MODEL` | 默认 `deepseek-chat`，可换 `deepseek-reasoner` |
 | `DEEPSEEK_BASE_URL` | 默认 `https://api.deepseek.com`，兼容网关可改 |
-| `BLENDER_MCP_DIR` | blender-mcp 仓库绝对路径，供 `config/mcp.json` 展开 |
+| `BLENDER_MCP_URL` | Blender MCP 插件地址，默认 `http://127.0.0.1:9876/mcp` |
 | `PORT` | 后端端口，默认 8787 |
 
 ### `config/mcp.json`
 
-MCP host 启动时读取该文件里的 mcpServers（支持 `${VAR}` 从 `.env` 展开）。默认用 `--lite` 模式控制上下文体积：模型通过 `tools_search` 发现工具、`tool_execute` 执行；`get_scene_info`、`execute_blender_code` 等基础工具仍可直接调用。去掉 `--lite` 可以得到全部 248 个工具（token 消耗大得多）。
+MCP host 启动时读取该文件里的 mcpServers（支持 `${VAR}` 从 `.env` 展开）。有 `url` 时走 Streamable HTTP，有 `command` 时按 stdio 拉起子进程：
 
 ```json
 {
   "mcpServers": {
     "blender": {
-      "command": "python",
-      "args": ["${BLENDER_MCP_DIR}/mcp_server.py", "--lite"],
-      "cwd": "${BLENDER_MCP_DIR}",
-      "env": { "PYTHONUNBUFFERED": "1", "BLENDER_MCP_LITE": "1" },
+      "url": "${BLENDER_MCP_URL}",
       "timeoutMs": 180000
     }
   }
 }
 ```
+
+换成 stdio MCP server（如 blender-mcp-ultra）时写成 `command`/`args` 即可，后端无需改代码。
 
 ## 后端 API
 
@@ -127,7 +123,7 @@ MCP host 启动时读取该文件里的 mcpServers（支持 `${VAR}` 从 `.env` 
 | POST | `/api/agent/answer` | `{text}` 回答 AI 的提问 |
 | POST | `/api/agent/cancel` | 中止当前任务 |
 | POST | `/api/agent/reset` | 清空会话（不影响场景） |
-| POST | `/api/mcp/reconnect` | 重新拉起 MCP server |
+| POST | `/api/mcp/reconnect` | 重新连接 MCP server |
 | POST | `/api/sync` | 立即从 Blender 导出 GLB 到预览 |
 | GET | `/api/files` | 工程列表 |
 | POST | `/api/files/new` | `{name}` 新建并另存为 `.blend` |
@@ -137,10 +133,10 @@ MCP host 启动时读取该文件里的 mcpServers（支持 `${VAR}` 从 `.env` 
 ## 常见问题
 
 - **提示「未配置 DEEPSEEK_API_KEY」**：在 `.env` 填好 Key 后重启后端。
-- **Blender 状态为红 / 工具报连接错误**：Blender 未打开，或插件未启用、未点 Connect。MCP server 本身连接成功只代表网关正常，socket 加密钥在 `%APPDATA%/blender-mcp/`。
+- **Blender 状态红 / 工具超时**：确认 Blender 里 MCP 面板显示 Running；若端口 9876 被多个 Blender 实例占用，关掉多余的 Blender 再 Start MCP Server。
 - **预览一直「等待 Blender 场景」**：Blender 中必须有对象；点击预览右上角「同步」重试。
 - **换模型 / 换 MCP server**：改 `.env` 或 `config/mcp.json` 后重启后端；agent 循环集中在 `server/agent.ts`，系统提示词在 `server/prompt.ts`，方便替换。
 
 ## 安全提示
 
-blender-mcp 的 `execute_blender_code` 可以在 Blender 中执行任意 Python。请只在本地使用，不要把后端端口暴露到公网。
+`execute_python` 可以在 Blender 中执行任意 Python。请只在本地使用，不要把后端端口暴露到公网。

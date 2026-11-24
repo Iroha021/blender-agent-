@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { ConnState } from "../shared/types";
 import { loadMcpConfig, type McpServerConfig } from "./config";
 
@@ -21,7 +22,8 @@ export class McpToolError extends Error {
 
 /**
  * MCP Host 最小实现：
- * 读取 config/mcp.json → spawn MCP server(stdio) → initialize → listTools → callTool。
+ * 读取 config/mcp.json → 按 url 连接 Streamable HTTP（如 Blender MCP 插件）
+ * 或按 command 启动 stdio server → initialize → listTools → callTool。
  * 只依赖官方 @modelcontextprotocol/sdk，替换 agent / server 时无需改动。
  */
 export class McpHost {
@@ -39,16 +41,18 @@ export class McpHost {
     const cfg = loadMcpConfig();
     this.cfg = cfg;
 
-    const transport = new StdioClientTransport({
-      command: cfg.command,
-      args: cfg.args,
-      cwd: cfg.cwd,
-      env: {
-        ...(process.env as Record<string, string>),
-        ...cfg.env,
-      },
-      stderr: "pipe",
-    });
+    const transport = cfg.url
+      ? new StreamableHTTPClientTransport(new URL(cfg.url))
+      : new StdioClientTransport({
+          command: cfg.command!,
+          args: cfg.args,
+          cwd: cfg.cwd,
+          env: {
+            ...(process.env as Record<string, string>),
+            ...cfg.env,
+          },
+          stderr: "pipe",
+        });
 
     const client = new Client({ name: "blender-agent", version: "0.1.0" });
 

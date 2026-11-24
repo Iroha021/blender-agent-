@@ -21,13 +21,13 @@ function isValidName(name: string): boolean {
   return name.toLowerCase().endsWith(".blend");
 }
 
-function parseToolResult(text: string): { success: boolean; error?: string } {
-  try {
-    const parsed = JSON.parse(text) as { success?: boolean; error?: string };
-    return { success: parsed.success !== false, error: parsed.error };
-  } catch {
-    return { success: true };
-  }
+function pythonPath(p: string): string {
+  return JSON.stringify(p.replace(/\\/g, "/"));
+}
+
+/** 通过「Blender MCP」插件的 execute_python 在 Blender 主线程里执行代码 */
+async function runPython(mcp: McpHost, code: string): Promise<void> {
+  await mcp.callTool("execute_python", { code, timeout: 120 }, 150_000);
 }
 
 export function listProjects(): ProjectFile[] {
@@ -64,12 +64,12 @@ export async function createProject(mcp: McpHost, rawName: string): Promise<File
   if (fs.existsSync(filepath)) return { ok: false, error: "同名工程已存在" };
 
   try {
-    const text = await mcp.callTool("tool_execute", {
-      tool_name: "io.save_file",
-      params: { filepath },
-    });
-    const { success, error } = parseToolResult(text);
-    if (!success) return { ok: false, error: error ?? "保存失败" };
+    const code = [
+      "import bpy",
+      `bpy.ops.wm.save_as_mainfile(filepath=${pythonPath(filepath)})`,
+      "result = {'saved': bpy.data.filepath}",
+    ].join("\n");
+    await runPython(mcp, code);
     activeProject = name;
     return { ok: true, name };
   } catch (err) {
@@ -83,12 +83,12 @@ export async function openProject(mcp: McpHost, name: string): Promise<FileOpRes
   if (!fs.existsSync(filepath)) return { ok: false, error: "工程文件不存在" };
 
   try {
-    const text = await mcp.callTool("tool_execute", {
-      tool_name: "io.load_file",
-      params: { filepath },
-    });
-    const { success, error } = parseToolResult(text);
-    if (!success) return { ok: false, error: error ?? "打开失败" };
+    const code = [
+      "import bpy",
+      `bpy.ops.wm.open_mainfile(filepath=${pythonPath(filepath)})`,
+      "result = {'opened': bpy.data.filepath}",
+    ].join("\n");
+    await runPython(mcp, code);
     activeProject = name;
     return { ok: true, name };
   } catch (err) {

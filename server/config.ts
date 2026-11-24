@@ -16,7 +16,10 @@ export const DEEPSEEK_BASE_URL = (process.env.DEEPSEEK_BASE_URL ?? "https://api.
   .replace(/\/+$/, "");
 
 export interface McpServerConfig {
-  command: string;
+  /** 远程 / 已运行中的 MCP server（Streamable HTTP），例如 Blender 插件 */
+  url?: string;
+  /** 本地 stdio 启动的 MCP server */
+  command?: string;
   args: string[];
   cwd?: string;
   env?: Record<string, string>;
@@ -53,13 +56,16 @@ export function loadMcpConfig(): McpServerConfig {
   }
 
   const [name, server] = Object.entries(servers)[0];
-  if (!server.command) throw new Error(`MCP server "${name}" 缺少 command 字段`);
+  if (!server.url && !server.command) {
+    throw new Error(`MCP server "${name}" 需要提供 url（HTTP）或 command（stdio）字段`);
+  }
 
   const expandRecord = (rec?: Record<string, string>) =>
     rec ? Object.fromEntries(Object.entries(rec).map(([k, v]) => [k, expandEnv(String(v))])) : {};
 
   return {
-    command: expandEnv(server.command),
+    url: server.url ? expandEnv(server.url) : undefined,
+    command: server.command ? expandEnv(server.command) : undefined,
     args: (server.args ?? []).map((a) => expandEnv(String(a))),
     cwd: server.cwd ? expandEnv(server.cwd) : undefined,
     env: expandRecord(server.env),

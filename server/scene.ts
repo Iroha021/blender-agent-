@@ -16,6 +16,11 @@ export interface SyncResult {
   error?: string;
 }
 
+/** 把路径转成 Python 字符串字面量（正斜杠，避免 Windows 转义） */
+function pythonPath(p: string): string {
+  return JSON.stringify(p.replace(/\\/g, "/"));
+}
+
 export function sceneFileInfo(): { exists: boolean; mtime: number } {
   try {
     return { exists: true, mtime: fs.statSync(SYNC_FILE).mtimeMs };
@@ -26,36 +31,24 @@ export function sceneFileInfo(): { exists: boolean; mtime: number } {
 
 /**
  * 从 Blender 导出当前场景为 GLB，并广播给前端 Three.js 预览。
- * 使用 blender-mcp-ultra 的 registry 工具 io.export_gltf。
+ * 通过「Blender MCP」插件的 execute_python 调用 bpy.ops.export_scene.gltf。
  */
 export async function syncScene(mcp: McpHost, hub: AgentHub): Promise<SyncResult> {
   if (syncing) return syncing;
   syncing = (async (): Promise<SyncResult> => {
     try {
       fs.mkdirSync(SYNC_DIR, { recursive: true });
-      const text = await mcp.callTool(
-        "tool_execute",
-        {
-          tool_name: "io.export_gltf",
-          params: { filepath: SYNC_FILE, format: "GLB" },
-        },
-        60_000
-      );
-
-      let success = true;
-      let error: string | undefined;
-      try {
-        const parsed = JSON.parse(text) as { success?: boolean; error?: string };
-        if (parsed.success === false) success = false;
-        error = parsed.error;
-      } catch {
-        /* 非 JSON 输出：以文件是否生成作为判断 */
-      }
+      const code = [
+        "import bpy, os",
+        `path = ${pythonPath(SYNC_FILE)}`,
+        "os.makedirs(os.path.dirname(path), exist_ok=True)",
+        "bpy.ops.export_scene.gltf(filepath=path, export_format='GLB', use_selection=False)",
+        "result = {'exported': path, 'size': os.path.getsize(path)}",
+      ].join("\n");
+      await mcp.callTool("execute_python", { code, timeout: 120 }, 150_000);
 
       const stat = fs.statSync(SYNC_FILE, { throwIfNoEntry: false });
-      if (!success || !stat || stat.size === 0) {
-        throw new Error(error ?? "GLB 导出失败");
-      }
+      if (!stat || stat.size === 0) throw new Error("GLB 导出失败（文件为空）");
 
       version += 1;
       lastError = null;
@@ -81,10 +74,10 @@ export function getSceneError(): string | null {
   return lastError;
 }
 
-/** 用只读工具探测 Blender 是否在线（addon socket :9876） */
+/** 用只读工具探测 Blender 是否在线（「Blender MCP」插件 HTTP :9876/mcp） */
 export async function probeBlender(mcp: McpHost): Promise<boolean> {
   try {
-    const text = await mcp.callTool("get_scene_info", {}, 20_000);
+    const text = await mcp.callTool("scene_get_overview", {}, 20_000);
     return text.trim().startsWith("{");
   } catch {
     return false;

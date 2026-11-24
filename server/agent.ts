@@ -8,6 +8,10 @@ const MAX_HISTORY = 60;
 const MAX_TOOL_RESULT_FOR_MODEL = 6000;
 const MAX_TOOL_RESULT_FOR_UI = 4000;
 
+/** 「Blender MCP」插件不提供 readOnly 注解，这里按工具名前缀判断是否只读（不需要导出预览） */
+const READ_ONLY_PATTERN =
+  /^(scene_|blend_|object_get_|mesh_get_|material_get_|shader_node_get_|armature_|bone_get_|action_get_|nla_get_|viewport_|render_|nodes_screenshot|animation_preview|animation_frames|unity_get_|unity_validate_|example_|explain_script)/;
+
 const ASK_USER_TOOL: ChatTool = {
   type: "function",
   function: {
@@ -261,7 +265,8 @@ export class SimpleAgent {
         content: truncate(text, MAX_TOOL_RESULT_FOR_MODEL),
       });
 
-      const readOnly = mcp.findTool(name)?.annotations?.readOnlyHint === true;
+      const readOnly =
+        mcp.findTool(name)?.annotations?.readOnlyHint === true || READ_ONLY_PATTERN.test(name);
       if (!readOnly) {
         await this.deps.syncScene();
       }
