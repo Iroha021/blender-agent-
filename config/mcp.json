@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "blender": {
+      "command": "python",
+      "args": ["${BLENDER_MCP_DIR}/mcp_server.py", "--lite"],
+      "cwd": "${BLENDER_MCP_DIR}",
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "BLENDER_MCP_LITE": "1"
+      },
+      "timeoutMs": 180000
+    }
+  }
+}
